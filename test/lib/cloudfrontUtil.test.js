@@ -22,6 +22,15 @@ describe('CloudfrontUtil', function() {
   var pkeyPath;
   var clock;
 
+  function denormalizeSignature(sig) {
+    var badCharMap = {'-': '+', '_': '=', '~': '/'};
+    Object.keys(badCharMap).forEach(function (badChar) {
+      var re = new RegExp('\\' + badChar, 'g');
+      sig = sig.replace(re, badCharMap[badChar]);
+    });
+    return sig;
+  }
+
   // Setup
   //------
   beforeEach(function(done) {
@@ -205,6 +214,128 @@ describe('CloudfrontUtil', function() {
     it('should fail if `s3key` is invalid', function(done) {
       var fn = function() {CloudfrontUtil.getSignedRTMPUrl('foo.com', '/key');};
       expect(fn).to.throw(Error, /s3 key doesn't look right/i);
+      done();
+    });
+  });
+
+  describe('#getSignedCookies()', function() {
+    it('should accept `expireTime` as a string', function(done) {
+      var testExpireTime = moment().add(1, 'day').unix() * 1000;
+      var params = _.extend({}, defaultParams, {
+        expireTime: testExpireTime.toString()
+      });
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+      var expectedResult = (testExpireTime / 1000).toString();
+
+      expect(result['CloudFront-Expires']).to.equal(expectedResult);
+      done();
+    });
+
+    it('should accept `expireTime` as a number', function(done) {
+      var testExpireTime = moment().add(1, 'day').unix() * 1000;
+      var params = _.extend({}, defaultParams, {
+        expireTime: testExpireTime
+      });
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+      var expectedResult = (testExpireTime / 1000).toString();
+
+      expect(result['CloudFront-Expires']).to.equal(expectedResult);
+      done();
+    });
+
+    it('should accept `expireTime` as a moment', function(done) {
+      var testExpireTime = moment().add(1, 'day');
+      var params = _.extend({}, defaultParams, {
+        expireTime: testExpireTime
+      });
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+      var expectedResult = testExpireTime.unix().toString();
+
+      expect(result['CloudFront-Expires']).to.equal(expectedResult);
+      done();
+    });
+
+    it('should accept `expireTime` as a Date', function(done) {
+      var testExpireTime = new Date(new Date().getTime() + 10000);
+      var params = _.extend({}, defaultParams, {
+        expireTime: testExpireTime
+      });
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+      var expectedResult =
+        Math.round(testExpireTime.getTime() / 1000).toString();
+
+      expect(result['CloudFront-Expires']).to.equal(expectedResult);
+      done();
+    });
+
+    it('should accept private key as string', function(done) {
+      var params = _.extend({}, defaultParams);
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+
+      expect(result).to.have.property('CloudFront-Signature');
+      done();
+    });
+
+    it('should accept private key as filepath', function(done) {
+      var params = _.extend({}, defaultParams, {
+        privateKeyPath: path.join(process.cwd(), pkeyPath)
+      });
+      var result;
+      var parsedResult;
+
+      delete params.privateKeyString;
+      result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+
+      expect(result).to.have.property('CloudFront-Signature');
+      done();
+    });
+
+    it('should default `expireTime` to 30 seconds', function(done) {
+      var params = _.extend({}, defaultParams);
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+
+      expect(result['CloudFront-Expires']).to.equal('30');
+      done();
+    });
+
+    it('should return signed cookies', function(done) {
+      var params = _.extend({}, defaultParams);
+      var result = CloudfrontUtil.getSignedCookies('http://foo.com', params);
+
+      expect(result).to.have.property('CloudFront-Expires');
+      expect(result).to.have.property('CloudFront-Signature');
+      expect(result).to.have.property('CloudFront-Key-Pair-Id');
+
+      done();
+    });
+
+    it('should not set `CloudFront-Expires` with CustomPolicy', function (done) {
+      var testExpireTime = moment().add(1, 'day').unix() * 1000;
+      var url = 'http://foo.com/*';
+      var customPolicy = new CloudfrontUtil.CustomPolicy(url, testExpireTime);
+      var params = _.extend({}, defaultParams, {
+        customPolicy: customPolicy
+      });
+      var result = CloudfrontUtil.getSignedCookies(url, params);
+
+      expect(result).to.not.have.property('CloudFront-Expires');
+      done();
+    });
+
+    it('should return signed cookie with CustomPolicy', function (done) {
+      var testExpireTime = moment().add(1, 'day').unix() * 1000;
+      var url = 'http://foo.com/*';
+      var customPolicy = new CloudfrontUtil.CustomPolicy(url, testExpireTime);
+      var params = _.extend({}, defaultParams, {
+        customPolicy: customPolicy
+      });
+      var result = CloudfrontUtil.getSignedCookies(url, params);
+      var policyString = new Buffer(
+        denormalizeSignature(result['CloudFront-Policy']), 'base64').toString();
+
+      expect(policyString).to.equal(customPolicy.toJSON());
+      expect(result).to.have.property('CloudFront-Signature');
+      expect(result).to.have.property('CloudFront-Key-Pair-Id');
       done();
     });
   });
